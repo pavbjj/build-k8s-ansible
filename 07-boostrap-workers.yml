@@ -1,0 +1,215 @@
+---
+- name: Generate certificate for worker node on master-1
+  hosts: master-1
+  become: true
+  tasks:
+    - name: Get the IP of worker-1
+      command: dig +short worker-1
+      register: worker_1_ip
+      changed_when: false
+
+    - name: Get the IP of loadbalancer
+      command: dig +short loadbalancer
+      register: loadbalancer_ip
+      changed_when: false
+
+    - name: Create openssl configuration file for worker-1
+      copy:
+        dest: /tmp/openssl-worker-1.cnf
+        content: |
+          [req]
+          req_extensions = v3_req
+          distinguished_name = req_distinguished_name
+          [req_distinguished_name]
+          [ v3_req ]
+          basicConstraints = CA:FALSE
+          keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+          subjectAltName = @alt_names
+          [alt_names]
+          DNS.1 = worker-1
+          IP.1 = {{ worker_1_ip.stdout }}
+
+    - name: Set cluster parameters for kubeconfig
+      command: >
+        kubectl config set-cluster kubernetes-the-hard-way
+        --certificate-authority=/var/lib/kubernetes/pki/ca.crt
+        --server=https://10.171.176.130:6443
+        --kubeconfig=/var/kubernetes/pki/worker-1.kubeconfig
+
+    - name: Set credentials for kubeconfig
+      command: >
+        kubectl config set-credentials system:node:worker-1
+        --client-certificate=/var/lib/kubernetes/pki/worker-1.crt
+        --client-key=/var/lib/kubernetes/pki/worker-1.key
+        --kubeconfig=/var/kubernetes/pki/worker-1.kubeconfig
+
+    - name: Set context for kubeconfig
+      command: >
+        kubectl config set-context default
+        --cluster=kubernetes-the-hard-way
+        --user=system:node:worker-1
+        --kubeconfig=/var/kubernetes/pki/worker-1.kubeconfig
+
+    - name: Use default context in kubeconfig
+      command: >
+        kubectl config use-context default
+        --kubeconfig=/var/kubernetes/pki/worker-1.kubeconfig
+
+    - name: Generate private key for worker-1
+      command: openssl genrsa -out /tmp/worker-1.key 2048
+      args:
+        creates: /tmp/worker-1.key
+
+    - name: Generate CSR for worker-1
+      command: >
+        openssl req -new -key /tmp/worker-1.key -subj "/CN=system:node:worker-1/O=system:nodes"
+        -out /tmp/worker-1.csr -config /tmp/openssl-worker-1.cnf
+      args:
+        creates: /tmp/worker-1.csr
+    
+    - name: Copy worker-1 kubeconfig
+      command: cp /var/kubernetes/pki/worker-1.kubeconfig /home/pawel/ca.crt /tmp/
+  
+    - name: Chmod worker-1 kubeconfig
+      command: chmod 755 /tmp/worker-1.kubeconfig
+    
+    - name: Sign CSR to generate certificate for worker-1
+      command: >
+        openssl x509 -req -in /tmp/worker-1.csr -CA /etc/kubernetes/pki/ca.crt
+        -CAkey /home/pawel/ca.key -CAcreateserial -out /tmp/worker-1.crt
+        -extensions v3_req -extfile /tmp/openssl-worker-1.cnf -days 1000
+      args:
+        creates: /tmp/worker-1.crt
+     
+    - name: chmod
+      shell: chmod 655 /tmp/worker-1.key /tmp/worker-1.crt /tmp/worker-1.kubeconfig /home/pawel/ca.crt
+    
+    - name: Securely copy key to worker certs using scp
+      become: false
+      shell: scp /tmp/worker-1.key /tmp/worker-1.crt /tmp/worker-1.kubeconfig /home/pawel/ca.crt pawel@worker-1:/tmp/
+
+    - name: Securely copy key to kube-proxy certs using scp
+      become: false
+      shell: scp /home/pawel/kube-proxy.crt /home/pawel/k8s-ansible/kubelet.kubeconfig /home/pawel/kube-proxy.key /home/pawel/kube-proxy.kubeconfig pawel@worker-1:/tmp/
+- name: Bootstrap Kubernetes Worker Nodes
+  hosts: worker-1
+  become: true
+  vars:
+    worker_cert: worker-1
+    ca_cert: ca.crt
+    pod_cidr: "10.244.0.0/16"
+    service_cidr: "10.96.0.0/16"
+    cluster_domain: cluster.local
+    resolv_conf: /run/systemd/resolve/resolv.conf
+
+  tasks:
+    - name: Download and install worker binaries
+      ansible.builtin.get_url:
+        url: "https://storage.googleapis.com/kubernetes-release/release/v1.24.3/bin/linux/amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        mode: '0755'
+      loop:
+        - kubectl
+        - kube-proxy
+        - kubelet
+
+    - name: Create required directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /var/lib/kubelet
+        - /var/lib/kube-proxy
+        - /var/lib/kubernetes/pki
+        - /var/run/kubernetes
+
+    - name: Move certificates and keys to correct directories
+      ansible.builtin.shell: |
+        cp /tmp/worker-1.key /tmp/kube-proxy.* /tmp/worker-1.crt /var/lib/kubernetes/pki/
+        cp /tmp/kubelet.kubeconfig /var/lib/kubelet/kubelet.kubeconfig
+        cp /tmp/kube-proxy.kubeconfig /var/lib/kube-proxy/kube-proxy.kubeconfig
+        cp /tmp/ca.crt /var/lib/kubernetes/pki/
+      args:
+        executable: /bin/bash
+
+    - name: Secure permissions for certificates and kubeconfig
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "/var/lib/kubernetes/pki/{{ worker_cert }}.key", mode: '0600' }
+        - { path: "/var/lib/kubernetes/pki/{{ worker_cert }}.crt", mode: '0600' }
+        - { path: "/var/lib/kubelet/kubelet.kubeconfig", mode: '0600' }
+        - { path: "/var/lib/kubernetes/pki/{{ ca_cert }}", mode: '0600' }
+
+    - name: Compute cluster DNS address
+      ansible.builtin.set_fact:
+        cluster_dns: "{{ service_cidr.split('.')[0:3] | join('.') }}.10"
+
+    - name: Create kubelet configuration file
+      ansible.builtin.template:
+        src: kubelet-config.yaml.j2
+        dest: /var/lib/kubelet/kubelet-config.yaml
+
+    - name: Create kubelet systemd unit file
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/kubelet.service
+        content: |
+          [Unit]
+          Description=Kubernetes Kubelet
+          Documentation=https://github.com/kubernetes/kubernetes
+          After=containerd.service
+          Requires=containerd.service
+
+          [Service]
+          ExecStart=/usr/local/bin/kubelet \
+            --config=/var/lib/kubelet/kubelet-config.yaml \
+            --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock \
+            --kubeconfig=/var/lib/kubelet/kubelet.kubeconfig \
+            --v=2
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Move kube-proxy kubeconfig
+      ansible.builtin.shell: cp /tmp/{{ worker_cert }}.kubeconfig /var/lib/kube-proxy/
+
+    - name: Create kube-proxy configuration file
+      ansible.builtin.template:
+        src: kube-proxy-config.yaml.j2
+        dest: /var/lib/kube-proxy/kube-proxy-config.yaml
+
+    - name: Create kube-proxy systemd unit file
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/kube-proxy.service
+        content: |
+          [Unit]
+          Description=Kubernetes Kube Proxy
+          Documentation=https://github.com/kubernetes/kubernetes
+
+          [Service]
+          ExecStart=/usr/local/bin/kube-proxy \
+            --config=/var/lib/kube-proxy/kube-proxy-config.yaml
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start and enable kubelet and kube-proxy services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - kubelet
+        - kube-proxy
+
+

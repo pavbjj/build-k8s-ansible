@@ -1,0 +1,14 @@
+---
+- name: Provision Pod Network
+  hosts: master-1
+  become: yes
+  tasks:
+
+    - name: Download Flannel CNI manifest
+      get_url:
+        url: https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+        dest: /tmp/kube-flannel.yml
+
+    - name: Apply Flannel CNI manifest
+      command: kubectl apply -f /tmp/kube-flannel.yml --kubeconfig /home/pawel/admin.kubeconfig
+

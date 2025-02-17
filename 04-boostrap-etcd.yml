@@ -1,0 +1,99 @@
+- name: Bootstrap etcd cluster
+  hosts: master-1, master-2
+  become: true
+  tasks:
+    - name: Download etcd binaries
+      ansible.builtin.get_url:
+        url: "https://github.com/coreos/etcd/releases/download/v3.5.3/etcd-v3.5.3-linux-amd64.tar.gz"
+        dest: /tmp/etcd-v3.5.3-linux-amd64.tar.gz
+      notify:
+        - Extract and install etcd
+
+    - name: Extract and install etcd
+      ansible.builtin.shell: |
+        tar -xvf /tmp/etcd-v3.5.3-linux-amd64.tar.gz
+        cp etcd-v3.5.3-linux-amd64/etcd* /usr/local/bin/
+      args:
+        chdir: /tmp
+      when: ansible_pkg_mgr != 'unknown'
+
+    - name: Create necessary directories for etcd
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /etc/etcd
+        - /var/lib/etcd
+        - /var/lib/kubernetes/pki
+
+    - name: Copy etcd certificates to /etc/etcd
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/etc/etcd/"
+        owner: root
+        group: root
+        mode: '0600'
+      loop:
+        - /etc/kubernetes/pki/etcd-server.key
+        - /etc/kubernetes/pki/etcd-server.crt
+
+    - name: Copy ca.crt to /var/lib/kubernetes/pki/
+      ansible.builtin.copy:
+        src: /etc/kubernetes/pki/ca.crt
+        dest: /var/lib/kubernetes/pki/ca.crt
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Create symbolic link for ca.crt in /etc/etcd
+      ansible.builtin.file:
+        src: /var/lib/kubernetes/pki/ca.crt
+        dest: /etc/etcd/ca.crt
+        state: link
+
+    - name: Retrieve internal IP address
+      ansible.builtin.shell: |
+        ip addr show | grep "inet " | awk '{print $2}' | cut -d / -f 1 | grep -v 127.0.0.1
+      register: internal_ip
+      changed_when: false
+    
+    - name: Set internal IP
+      ansible.builtin.set_fact:
+         internal_ip: "{{ internal_ip.stdout }}"
+    
+    - name: Set etcd member name
+      ansible.builtin.shell: hostname -s
+      register: etcd_name
+      changed_when: false
+
+    - name: Set etcd name
+      ansible.builtin.set_fact:
+         etcd_name: "{{ etcd_name.stdout }}"
+
+    - name: Create etcd systemd unit file
+      ansible.builtin.template:
+        src: etcd.service.j2
+        dest: /etc/systemd/system/etcd.service
+      vars:
+        internal_ip: "{{ internal_ip.stdout }}"
+        etcd_name: "{{ etcd_name.stdout }}"
+      notify:
+        - Reload systemd
+        - Enable and start etcd service
+
+    - name: Extract and install etcd
+      ansible.builtin.command: tar -xvf /tmp/etcd-v3.5.3-linux-amd64.tar.gz -C /usr/local/bin/
+      become: true
+      ignore_errors: yes
+
+    - name: Reload systemd
+      ansible.builtin.command: systemctl daemon-reload
+
+    - name: Enable and start etcd service
+      ansible.builtin.systemd:
+        name: etcd
+        enabled: true
+        state: started

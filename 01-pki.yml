@@ -1,0 +1,218 @@
+---
+- name: Provision CA and generate TLS certificates
+  hosts: master-1
+  become: yes
+  vars:
+    service_cidr: "10.96.0.0/24"
+    api_service: "{{ service_cidr | regex_replace('^([0-9]+\\.[0-9]+\\.[0-9]+)\\.[0-9]+(?:/[0-9]+)?$', '\\1.1') }}"
+    cert_days: 1000
+
+  tasks:
+    - name: Install necessary packages
+      ansible.builtin.package:
+        name: openssl
+        state: present
+
+    - name: Query IPs of hosts for SANs
+      ansible.builtin.shell: |
+        echo $(dig +short {{ item }})
+      loop:
+        - master-1
+        - master-2
+        - loadbalancer
+      register: san_ips
+
+    - name: Set SAN IP variables
+      ansible.builtin.set_fact:
+        master_1: "{{ san_ips.results[0].stdout }}"
+        master_2: "{{ san_ips.results[1].stdout }}"
+        loadbalancer: "{{ san_ips.results[2].stdout }}"
+
+    - name: Configure openssl.cnf for CA
+      ansible.builtin.shell: |
+        sudo sed -i '0,/RANDFILE/{s/RANDFILE/\#&/}' /etc/ssl/openssl.cnf
+
+    - name: Create CA certificate and key
+      ansible.builtin.shell: |
+        openssl genrsa -out ca.key 2048
+        openssl req -new -key ca.key -subj "/CN=KUBERNETES-CA/O=Kubernetes" -out ca.csr
+        openssl x509 -req -in ca.csr -signkey ca.key -CAcreateserial -out ca.crt -days {{ cert_days }}
+        chmod 644 ca.crt
+        chmod 644 ca.key
+
+    - name: Generate admin certificate and key
+      ansible.builtin.shell: |
+        openssl genrsa -out admin.key 2048
+        openssl req -new -key admin.key -subj "/CN=admin/O=system:masters" -out admin.csr
+        openssl x509 -req -in admin.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out admin.crt -days {{ cert_days }}
+        chmod 644 admin.key
+        chmod 644 admin.crt
+
+    - name: Generate kube-controller-manager certificate and key
+      ansible.builtin.shell: |
+        openssl genrsa -out kube-controller-manager.key 2048
+        openssl req -new -key kube-controller-manager.key -subj "/CN=system:kube-controller-manager/O=system:kube-controller-manager" -out kube-controller-manager.csr
+        openssl x509 -req -in kube-controller-manager.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out kube-controller-manager.crt -days {{ cert_days }}
+        chmod 644 kube-controller-manager.key
+        chmod 644 kube-controller-manager.crt
+
+    - name: Generate kube-proxy certificate and key
+      ansible.builtin.shell: |
+        openssl genrsa -out kube-proxy.key 2048
+        openssl req -new -key kube-proxy.key -subj "/CN=system:kube-proxy/O=system:node-proxier" -out kube-proxy.csr
+        openssl x509 -req -in kube-proxy.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out kube-proxy.crt -days {{ cert_days }}
+        chmod 644 kube-proxy.key
+        chmod 644 kube-proxy.crt
+
+    - name: Generate kube-scheduler certificate and key
+      ansible.builtin.shell: |
+        openssl genrsa -out kube-scheduler.key 2048
+        openssl req -new -key kube-scheduler.key -subj "/CN=system:kube-scheduler/O=system:kube-scheduler" -out kube-scheduler.csr
+        openssl x509 -req -in kube-scheduler.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out kube-scheduler.crt -days {{ cert_days }}
+        chmod 644 kube-scheduler.key 
+        chmod 644 kube-scheduler.crt
+
+    - name: Create kube-apiserver OpenSSL configuration file
+      ansible.builtin.copy:
+        dest: /etc/ssl/openssl-kube-apiserver.cnf
+        content: |
+          [req]
+          req_extensions = v3_req
+          distinguished_name = req_distinguished_name
+          [req_distinguished_name]
+          [v3_req]
+          basicConstraints = critical, CA:FALSE
+          keyUsage = critical, nonRepudiation, digitalSignature, keyEncipherment
+          extendedKeyUsage = serverAuth
+          subjectAltName = @alt_names
+          [alt_names]
+          DNS.1 = kubernetes
+          DNS.2 = kubernetes.default
+          DNS.3 = kubernetes.default.svc
+          DNS.4 = kubernetes.default.svc.cluster
+          DNS.5 = kubernetes.default.svc.cluster.local
+          IP.1 = 10.96.0.1
+          IP.2 = {{ master_1 }}
+          IP.3 = {{ master_2 }}
+          IP.4 = {{ loadbalancer }}
+          IP.5 = 127.0.0.1
+
+    - name: Generate kube-apiserver certificate and key
+      ansible.builtin.shell: |
+        openssl genrsa -out kube-apiserver.key 2048
+        openssl req -new -key kube-apiserver.key -subj "/CN=kube-apiserver/O=Kubernetes" -out kube-apiserver.csr -config /etc/ssl/openssl-kube-apiserver.cnf
+        openssl x509 -req -in kube-apiserver.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out kube-apiserver.crt -extensions v3_req -extfile /etc/ssl/openssl-kube-apiserver.cnf -days {{ cert_days }}
+        chmod 644 kube-apiserver.key
+        chmod 644 kube-apiserver.crt
+    
+    - name: Create The Kubelet Client Certificate
+      ansible.builtin.copy:
+        dest: /home/pawel/openssl-kubelet.cnf
+        content: |
+          [req]
+          req_extensions = v3_req
+          distinguished_name = req_distinguished_name
+          [req_distinguished_name]
+          [v3_req]
+          basicConstraints = critical, CA:FALSE
+          keyUsage = critical, nonRepudiation, digitalSignature, keyEncipherment
+          extendedKeyUsage = clientAuth
+    
+    - name: Generate certs for kubelet authentication
+      ansible.builtin.shell: |
+        openssl genrsa -out apiserver-kubelet-client.key 2048
+        openssl req -new -key apiserver-kubelet-client.key -subj "/CN=kube-apiserver-kubelet-client/O=system:masters" -out apiserver-kubelet-client.csr -config /home/pawel/openssl-kubelet.cnf
+        openssl x509 -req -in apiserver-kubelet-client.csr -CA ca.crt -CAkey ca.key -CAcreateserial  -out apiserver-kubelet-client.crt -extensions v3_req -extfile openssl-kubelet.cnf -days 1000
+        chmod 644 apiserver-kubelet-client.key
+        chmod 644 apiserver-kubelet-client.crt
+    
+    - name: Create etcd OpenSSL configuration file
+      ansible.builtin.copy:
+        dest: /etc/ssl/openssl-etcd.cnf
+        content: |
+          [req]
+          req_extensions = v3_req
+          distinguished_name = req_distinguished_name
+          [req_distinguished_name]
+          [ v3_req ]
+          basicConstraints = CA:FALSE
+          keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+          subjectAltName = @alt_names
+          [alt_names]
+          IP.1 = {{ master_1 }}
+          IP.2 = {{ master_2 }}
+          IP.3 = 127.0.0.1
+
+    - name: Generate etcd certificate and key
+      ansible.builtin.shell: |
+        openssl genrsa -out etcd-server.key 2048
+        openssl req -new -key etcd-server.key -subj "/CN=etcd-server/O=Kubernetes" -out etcd-server.csr -config /etc/ssl/openssl-etcd.cnf
+        openssl x509 -req -in etcd-server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out etcd-server.crt -extensions v3_req -extfile /etc/ssl/openssl-etcd.cnf -days {{ cert_days }}
+        chmod 644 etcd-server.key
+    
+    - name: Generate service account key pair
+      ansible.builtin.shell: |
+        openssl genrsa -out service-account.key 2048
+        openssl req -new -key service-account.key -subj "/CN=service-accounts/O=Kubernetes" -out service-account.csr
+        openssl x509 -req -in service-account.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out service-account.crt -days {{ cert_days }}
+        chmod 644 service-account.key
+        chmod 644 service-account.crt
+
+
+- name: Provision CA and generate TLS certificates
+  hosts: masters
+  become: yes
+  tasks:
+    - name: Ensure /etc/kubernetes directory exists
+      ansible.builtin.file:
+        path: /etc/kubernetes
+        state: directory
+        owner: root
+        group: root
+
+    - name: Ensure /etc/kubernetes/pki directory exists
+      ansible.builtin.file:
+        path: /etc/kubernetes/pki
+        state: directory
+        owner: root
+        group: root
+    - name: Ensure /var/lib/kuberentes directory exists
+      ansible.builtin.file:
+        path: /var/lib/kubernetes
+        state: directory
+        owner: root
+        group: root
+
+      ansible.builtin.file:
+        path: /var/lib/kubernetes/pki
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+    - name: Distribute certificates to nodes
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+      loop:
+        - { src: '/home/pawel/ca.crt', dest: '/etc/kubernetes/pki/ca.crt' }
+        - { src: '/home/pawel/admin.crt', dest: '/etc/kubernetes/pki/admin.crt' }
+        - { src: '/home/pawel/admin.key', dest: '/etc/kubernetes/pki/admin.key' }
+        - { src: '/home/pawel/kube-controller-manager.crt', dest: '/etc/kubernetes/pki/kube-controller-manager.crt' }
+        - { src: '/home/pawel/kube-controller-manager.key', dest: '/etc/kubernetes/pki/kube-controller-manager.key' }
+        - { src: '/home/pawel/kube-proxy.crt', dest: '/etc/kubernetes/pki/kube-proxy.crt' }
+        - { src: '/home/pawel/kube-proxy.key', dest: '/etc/kubernetes/pki/kube-proxy.key' }
+        - { src: '/home/pawel/kube-proxy.key', dest: '/var/lib/kubernetes/pki/kube-proxy.key' }
+        - { src: '/home/pawel/kube-proxy.crt', dest: '/var/lib/kubernetes/pki/kube-proxy.crt' }
+        - { src: '/home/pawel/kube-scheduler.crt', dest: '/etc/kubernetes/pki/kube-scheduler.crt' }
+        - { src: '/home/pawel/kube-scheduler.key', dest: '/etc/kubernetes/pki/kube-scheduler.key' }
+        - { src: '/home/pawel/kube-apiserver.crt', dest: '/etc/kubernetes/pki/kube-apiserver.crt' }
+        - { src: '/home/pawel/kube-apiserver.key', dest: '/etc/kubernetes/pki/kube-apiserver.key' }
+        - { src: '/home/pawel/service-account.crt', dest: '/etc/kubernetes/pki/service-account.crt' }
+        - { src: '/home/pawel/service-account.key', dest: '/etc/kubernetes/pki/service-account.key' }
+        - { src: '/home/pawel/etcd-server.crt', dest: '/etc/kubernetes/pki/etcd-server.crt' }
+        - { src: '/home/pawel/etcd-server.key', dest: '/etc/kubernetes/pki/etcd-server.key' }
+        - { src: '/home/pawel/apiserver-kubelet-client.key', dest: '/etc/kubernetes/pki/apiserver-kubelet-client.key' }
+        - { src: '/home/pawel/apiserver-kubelet-client.crt', dest: '/etc/kubernetes/pki/apiserver-kubelet-client.crt' }
+        - { src: '/home/pawel/apiserver-kubelet-client.key', dest: '/var/lib/kubernetes/pki/apiserver-kubelet-client.key' }
+        - { src: '/home/pawel/apiserver-kubelet-client.crt', dest: '/var/lib/kubernetes/pki/apiserver-kubelet-client.crt' }
+
