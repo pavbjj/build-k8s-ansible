@@ -31,7 +31,7 @@
 
     - name: Set cluster parameters for kubeconfig
       command: >
-        kubectl config set-cluster kubernetes-the-hard-way
+        kubectl config set-cluster c-serv-k8s
         --certificate-authority=/var/lib/kubernetes/pki/ca.crt
         --server=https://10.171.176.130:6443
         --kubeconfig=/var/kubernetes/pki/worker-1.kubeconfig
@@ -46,7 +46,7 @@
     - name: Set context for kubeconfig
       command: >
         kubectl config set-context default
-        --cluster=kubernetes-the-hard-way
+        --cluster=c-serv-k8s
         --user=system:node:worker-1
         --kubeconfig=/var/kubernetes/pki/worker-1.kubeconfig
 
