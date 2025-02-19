@@ -48,3 +48,7 @@ Run each playbook manually:
 ```
 ansible-playbook --ask-become-pass 01-pki.yml
 ```
+
+# Credits
+Build Kuberentes Hardway
+https://github.com/kelseyhightower/kubernetes-the-hard-way
