@@ -50,5 +50,5 @@ ansible-playbook --ask-become-pass 01-pki.yml
 ```
 
 # Credits
-Build Kuberentes Hardway
+Build Kubernetes Hardway
 https://github.com/kelseyhightower/kubernetes-the-hard-way
