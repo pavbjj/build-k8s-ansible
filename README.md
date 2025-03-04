@@ -51,7 +51,7 @@ ansible-playbook --ask-become-pass 01-pki.yml
 ### Diagram
 ```mermaid
 flowchart LR
-PKI --> ETCD --> KubeAPI
+PKI --> ETCD --> KubeAPI --> Worker nodes --> CNI/CRI --> Test App
 ```
 
 # Credits
