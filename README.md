@@ -48,6 +48,11 @@ Run each playbook manually:
 ```
 ansible-playbook --ask-become-pass 01-pki.yml
 ```
+### Diagram
+```mermaid
+flowchart LR
+PKI --> ETCD --> KubeAPI
+```
 
 # Credits
 Build Kubernetes Hardway
