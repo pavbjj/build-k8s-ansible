@@ -91,7 +91,7 @@ ansible-playbook --ask-become-pass 01-pki.yml
 ### Workflow
 ```mermaid
 flowchart LR
-PKI --> ETCD --> KubeAPI --> WorkerNodes --> CNI/CRI --> TestApp
+PKI --> ETCD --> Kube-* --> WorkerNodes --> CNI/CRI --> TestApp
 ```
 
 # Credits
