@@ -4,7 +4,7 @@ This Repo contains Ansible playbooks to provision Kuberentes cluster.
 ### Diagram 
 ```mermaid
 graph TD;
-    LB[Load balancer] --> HAProxy[HA Proxy]
+    LB[Client/Admin] --> HAProxy[HA Proxy]
 
     subgraph Master-1
         CA[CA]
