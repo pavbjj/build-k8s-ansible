@@ -88,7 +88,7 @@ Run each playbook manually:
 ```
 ansible-playbook --ask-become-pass 01-pki.yml
 ```
-### Diagram
+### Workflow
 ```mermaid
 flowchart LR
 PKI --> ETCD --> KubeAPI --> WorkerNodes --> CNI/CRI --> TestApp
