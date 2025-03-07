@@ -1,6 +1,46 @@
 # Build K8s manually
 ## Description
 This Repo contains Ansible playbooks to provision Kuberentes cluster.
+### Diagram 
+```mermaid
+graph TD;
+    LB[Load balancer] --> HAProxy[HA Proxy]
+
+    subgraph Master-1
+        CA[CA]
+        etcd1[etcd 2739]
+        api1[api 6443]
+        scheduler1[scheduler 10259]
+        controller1[controller 10257]
+    end
+
+    subgraph Master-2
+        etcd2[etcd 2739]
+        api2[api 6443]
+        scheduler2[scheduler 10259]
+        controller2[controller 10257]
+    end
+
+    subgraph Worker-1
+        kubelet1[kubelet]
+        containerd1[containerd]
+        proxy1[proxy]
+    end
+
+    subgraph Worker-2
+        kubelet2[kubelet]
+        containerd2[containerd]
+        proxy2[proxy]
+    end
+
+    HAProxy --> Master-1
+    HAProxy --> Master-2
+
+    Master-1 --> Worker-1
+    Master-1 --> Worker-2
+    Master-2 --> Worker-1
+    Master-2 --> Worker-2
+```
 
 ## Usage
 ### Ansible hosts file
