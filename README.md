@@ -35,6 +35,8 @@ graph TD;
 
     HAProxy --> Master-1
     HAProxy --> Master-2
+    HAProxy --> Worker-1
+    HAProxy --> Worker-2
 
     Master-1 --> Worker-1
     Master-1 --> Worker-2
