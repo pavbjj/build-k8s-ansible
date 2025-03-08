@@ -40,6 +40,10 @@ graph TD;
     Master-1 --> Worker-2
     Master-2 --> Worker-1
     Master-2 --> Worker-2
+
+    style Worker-1 fill:#ADD8E6,stroke:#000
+    style Worker-2 fill:#ADD8E6,stroke:#000
+
 ```
 
 ## Usage
