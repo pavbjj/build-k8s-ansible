@@ -9,28 +9,28 @@ graph TD;
     subgraph Master-1
         CA[CA]
         etcd1[etcd 2739]
-        api1[api 6443]
-        scheduler1[scheduler 10259]
-        controller1[controller 10257]
+        api1[kube-api 6443]
+        scheduler1[kube-scheduler 10259]
+        controller1[kube-controller 10257]
     end
 
     subgraph Master-2
         etcd2[etcd 2739]
-        api2[api 6443]
-        scheduler2[scheduler 10259]
-        controller2[controller 10257]
+        api2[kube-api 6443]
+        scheduler2[kube-scheduler 10259]
+        controller2[kube-controller 10257]
     end
 
     subgraph Worker-1
         kubelet1[kubelet]
         containerd1[containerd]
-        proxy1[proxy]
+        proxy1[kube-proxy]
     end
 
     subgraph Worker-2
         kubelet2[kubelet]
         containerd2[containerd]
-        proxy2[proxy]
+        proxy2[kube-proxy]
     end
 
     HAProxy --> Master-1
