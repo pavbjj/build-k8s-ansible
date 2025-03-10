@@ -45,7 +45,11 @@ graph TD;
     style Worker-2 fill:#ADD8E6,stroke:#000
 
 ```
-
+### Workflow
+```mermaid
+flowchart LR
+PKI --> ETCD --> Kube-* --> WorkerNodes --> CNI/CRI --> TestApp
+```
 ## Usage
 ### Ansible hosts file
 
@@ -91,11 +95,6 @@ sudo ./clean-up.sh stop
 Run each playbook manually:
 ```
 ansible-playbook --ask-become-pass 01-pki.yml
-```
-### Workflow
-```mermaid
-flowchart LR
-PKI --> ETCD --> Kube-* --> WorkerNodes --> CNI/CRI --> TestApp
 ```
 
 # Credits
