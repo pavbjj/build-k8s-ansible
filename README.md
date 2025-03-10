@@ -1,7 +1,7 @@
 # Build K8s manually
 ## Description
 This Repo contains Ansible playbooks to provision Kuberentes cluster.
-### Diagram 
+### Topology 
 ```mermaid
 graph TD;
     LB[Client/Admin] --> HAProxy[HA Proxy]
@@ -69,7 +69,7 @@ master-2
 worker-1
 worker-2
 ```
-* Make sure your systems hosts file is correct:
+* Make sure your system's hosts file is correct:
 Example:
 ```
 10.171.176.131 master-1
