@@ -1,11 +1,31 @@
 ---
-- name: Generate certificate for worker node on master-1
+- name: Generate kubelet configs dynamically
+  hosts: localhost
+  vars:
+    workers:
+      - worker-1
+      - worker-2
+  tasks:
+    - name: Render kubeconfig for each worker
+      ansible.builtin.template:
+        src: kubelet.kubeconfig.j2
+        dest: "/home/pawel/k8s-ansible/kubelet-{{ item }}.kubeconfig"
+      loop: "{{ workers }}"
+      vars:
+        worker_name: "{{ item }}"
+
+- name: Generate certificates for worker nodes on master-1
   hosts: master-1
   become: true
+  vars:
+    workers:
+      - worker-1
+      - worker-2
   tasks:
-    - name: Get the IP of worker-1
-      command: dig +short worker-1
-      register: worker_1_ip
+    - name: Get the IPs of worker nodes
+      command: dig +short {{ item }}
+      loop: "{{ workers }}"
+      register: worker_ips
       changed_when: false
 
     - name: Get the IP of loadbalancer
@@ -13,9 +33,9 @@
       register: loadbalancer_ip
       changed_when: false
 
-    - name: Create openssl configuration file for worker-1
+    - name: Generate OpenSSL configuration files for workers
       copy:
-        dest: /tmp/openssl-worker-1.cnf
+        dest: "/tmp/openssl-{{ item }}.cnf"
         content: |
           [req]
           req_extensions = v3_req
@@ -26,76 +46,107 @@
           keyUsage = nonRepudiation, digitalSignature, keyEncipherment
           subjectAltName = @alt_names
           [alt_names]
-          DNS.1 = worker-1
-          IP.1 = {{ worker_1_ip.stdout }}
+          DNS.1 = {{ item }}
+          IP.1 = {{
+            worker_ips.results | selectattr('item', 'equalto', item) | map(attribute='stdout') | first
+          }}
+      loop: "{{ workers }}"
 
     - name: Set cluster parameters for kubeconfig
       command: >
         kubectl config set-cluster c-serv-k8s
         --certificate-authority=/var/lib/kubernetes/pki/ca.crt
         --server=https://10.171.176.130:6443
-        --kubeconfig=/var/kubernetes/pki/worker-1.kubeconfig
+        --kubeconfig=/var/kubernetes/pki/{{ item }}.kubeconfig
+      loop: "{{ workers }}"
 
     - name: Set credentials for kubeconfig
       command: >
-        kubectl config set-credentials system:node:worker-1
-        --client-certificate=/var/lib/kubernetes/pki/worker-1.crt
-        --client-key=/var/lib/kubernetes/pki/worker-1.key
-        --kubeconfig=/var/kubernetes/pki/worker-1.kubeconfig
+        kubectl config set-credentials system:node:{{ item }}
+        --client-certificate=/var/lib/kubernetes/pki/{{ item }}.crt
+        --client-key=/var/lib/kubernetes/pki/{{ item }}.key
+        --kubeconfig=/var/kubernetes/pki/{{ item }}.kubeconfig
+      loop: "{{ workers }}"
 
     - name: Set context for kubeconfig
       command: >
         kubectl config set-context default
         --cluster=c-serv-k8s
-        --user=system:node:worker-1
-        --kubeconfig=/var/kubernetes/pki/worker-1.kubeconfig
+        --user=system:node:{{ item }}
+        --kubeconfig=/var/kubernetes/pki/{{ item }}.kubeconfig
+      loop: "{{ workers }}"
 
     - name: Use default context in kubeconfig
       command: >
         kubectl config use-context default
-        --kubeconfig=/var/kubernetes/pki/worker-1.kubeconfig
+        --kubeconfig=/var/kubernetes/pki/{{ item }}.kubeconfig
+      loop: "{{ workers }}"
 
-    - name: Generate private key for worker-1
-      command: openssl genrsa -out /tmp/worker-1.key 2048
+    - name: Generate private key for worker
+      command: openssl genrsa -out /tmp/{{ item }}.key 2048
       args:
-        creates: /tmp/worker-1.key
+        creates: /tmp/{{ item }}.key
+      loop: "{{ workers }}"
 
-    - name: Generate CSR for worker-1
+    - name: Generate CSR for worker
       command: >
-        openssl req -new -key /tmp/worker-1.key -subj "/CN=system:node:worker-1/O=system:nodes"
-        -out /tmp/worker-1.csr -config /tmp/openssl-worker-1.cnf
+        openssl req -new -key /tmp/{{ item }}.key -subj "/CN=system:node:{{ item }}/O=system:nodes"
+        -out /tmp/{{ item }}.csr -config /tmp/openssl-{{ item }}.cnf
       args:
-        creates: /tmp/worker-1.csr
-    
-    - name: Copy worker-1 kubeconfig
-      command: cp /var/kubernetes/pki/worker-1.kubeconfig /home/pawel/ca.crt /tmp/
-  
-    - name: Chmod worker-1 kubeconfig
-      command: chmod 755 /tmp/worker-1.kubeconfig
-    
-    - name: Sign CSR to generate certificate for worker-1
-      command: >
-        openssl x509 -req -in /tmp/worker-1.csr -CA /etc/kubernetes/pki/ca.crt
-        -CAkey /home/pawel/ca.key -CAcreateserial -out /tmp/worker-1.crt
-        -extensions v3_req -extfile /tmp/openssl-worker-1.cnf -days 1000
-      args:
-        creates: /tmp/worker-1.crt
-     
-    - name: chmod
-      shell: chmod 655 /tmp/worker-1.key /tmp/worker-1.crt /tmp/worker-1.kubeconfig /home/pawel/ca.crt
-    
-    - name: Securely copy key to worker certs using scp
-      become: false
-      shell: scp /tmp/worker-1.key /tmp/worker-1.crt /tmp/worker-1.kubeconfig /home/pawel/ca.crt pawel@worker-1:/tmp/
+        creates: /tmp/{{ item }}.csr
+      loop: "{{ workers }}"
 
-    - name: Securely copy key to kube-proxy certs using scp
+    - name: Sign CSR to generate certificate
+      command: >
+        openssl x509 -req -in /tmp/{{ item }}.csr -CA /etc/kubernetes/pki/ca.crt
+        -CAkey /home/pawel/ca.key -CAcreateserial -out /tmp/{{ item }}.crt
+        -extensions v3_req -extfile /tmp/openssl-{{ item }}.cnf -days 1000
+      args:
+        creates: /tmp/{{ item }}.crt
+      loop: "{{ workers }}"
+
+    - name: Copy kubeconfig and CA to /tmp
+      command: cp /var/kubernetes/pki/{{ item }}.kubeconfig /home/pawel/ca.crt /tmp/
+      loop: "{{ workers }}"
+
+    - name: Chmod kubeconfig
+      command: chmod 755 /tmp/{{ item }}.kubeconfig
+      loop: "{{ workers }}"
+
+    - name: Ensure pawel can read worker keys
+      file:
+        path: "/tmp/{{ item }}.key"
+        mode: '0644'
+      loop: "{{ workers }}"
+
+    - name: Ensure pawel can read worker certs
+      file:
+        path: "/tmp/{{ item }}.crt"
+        mode: '0644'
+      loop: "{{ workers }}"
+
+    - name: Ensure pawel can read kubeconfigs
+      file:
+        path: "/tmp/{{ item }}.kubeconfig"
+        mode: '0644'
+      loop: "{{ workers }}"
+
+    - name: Securely copy worker certs using scp
       become: false
-      shell: scp /home/pawel/kube-proxy.crt /home/pawel/k8s-ansible/kubelet.kubeconfig /home/pawel/kube-proxy.key /home/pawel/kube-proxy.kubeconfig pawel@worker-1:/tmp/
+      shell: scp /tmp/{{ item }}.key /tmp/{{ item }}.crt /tmp/{{ item }}.kubeconfig /home/pawel/ca.crt pawel@{{ item }}:/tmp/
+      loop: "{{ workers }}"
+
+    - name: Securely copy kube-proxy certs to worker
+      become: false
+      shell: scp /home/pawel/kube-proxy.crt /home/pawel/k8s-ansible/kubelet-{{ item }}.kubeconfig /home/pawel/kube-proxy.key /home/pawel/kube-proxy.kubeconfig pawel@{{ item }}:/tmp/
+      loop: "{{ workers }}"
+
 - name: Bootstrap Kubernetes Worker Nodes
-  hosts: worker-1
+  hosts: 
+    - worker-1
+    - worker-2
   become: true
   vars:
-    worker_cert: worker-1
     ca_cert: ca.crt
     pod_cidr: "10.244.0.0/16"
     service_cidr: "10.96.0.0/16"
@@ -103,6 +154,10 @@
     resolv_conf: /run/systemd/resolve/resolv.conf
 
   tasks:
+    - name: Set worker_cert dynamically
+      set_fact:
+        worker_cert: "{{ inventory_hostname }}"
+
     - name: Download and install worker binaries
       ansible.builtin.get_url:
         url: "https://storage.googleapis.com/kubernetes-release/release/v1.24.3/bin/linux/amd64/{{ item }}"
@@ -128,8 +183,8 @@
 
     - name: Move certificates and keys to correct directories
       ansible.builtin.shell: |
-        cp /tmp/worker-1.key /tmp/kube-proxy.* /tmp/worker-1.crt /var/lib/kubernetes/pki/
-        cp /tmp/kubelet.kubeconfig /var/lib/kubelet/kubelet.kubeconfig
+        cp /tmp/{{ worker_cert }}.key /tmp/kube-proxy.* /tmp/{{ worker_cert }}.crt /var/lib/kubernetes/pki/
+        cp /tmp/kubelet-{{ worker_cert }}.kubeconfig /var/lib/kubelet/kubelet.kubeconfig
         cp /tmp/kube-proxy.kubeconfig /var/lib/kube-proxy/kube-proxy.kubeconfig
         cp /tmp/ca.crt /var/lib/kubernetes/pki/
       args:
@@ -211,5 +266,3 @@
       loop:
         - kubelet
         - kube-proxy
-
-
