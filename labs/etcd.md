@@ -19,11 +19,6 @@ ETCDCTL_API=3 etcdctl \
   get / --prefix --keys-only
 ```
 
-## Write to ETCD
-
-```
-ETCDCTL_API=3 etcdctl put /demo/message "Hello from etcd"
-```
  
 ## Check kube-apiserver kube-controller-manager kube-scheduler
 ```
