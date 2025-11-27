@@ -29,3 +29,6 @@ ETCDCTL_API=3 etcdctl put /demo/message "Hello from etcd"
 ```
 curl -k https://10.171.176.131:6443/healthz
 ```
+```
+curl -k https://10.171.176.131:6443/api
+```
