@@ -37,3 +37,11 @@ curl -k https://10.171.176.131:6443/healthz
 ```
 curl -k https://10.171.176.131:6443/api
 ```
+
+## Check CTR
+```
+ctr images pull docker.io/library/nginx:latest
+```
+```
+ctr images ls
+```
