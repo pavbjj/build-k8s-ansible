@@ -52,3 +52,8 @@ ip a
 kubectl --kubeconfig ../admin.kubeconfig describe pod frontend
 ```
 
+## Check kube-proxy
+```
+sudo conntrack -L 
+```
+
