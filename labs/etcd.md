@@ -45,3 +45,15 @@ ctr images pull docker.io/library/nginx:latest
 ```
 ctr images ls
 ```
+## Check flannel
+On worker,
+```
+cat /run/flannel/subnet.env
+```
+```
+ip a
+```
+```
+kubectl --kubeconfig ../admin.kubeconfig describe pod frontend
+```
+
