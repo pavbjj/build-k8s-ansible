@@ -25,7 +25,12 @@ ETCDCTL_API=3 etcdctl \
 ETCDCTL_API=3 etcdctl put /demo/message "Hello from etcd"
 ```
  
-## Check kube-apiserver
+## Check kube-apiserver kube-controller-manager kube-scheduler
+```
+systemctl status kube-apiserver
+systemctl status kube-controller-manager
+systemctl status kube-scheduler
+```
 ```
 curl -k https://10.171.176.131:6443/healthz
 ```
